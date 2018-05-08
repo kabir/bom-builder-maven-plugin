@@ -187,7 +187,7 @@ public class BuildBomMojo
             Dependency dep = new Dependency();
             dep.setGroupId( artifact.getGroupId() );
             dep.setArtifactId( artifact.getArtifactId() );
-            dep.setVersion( artifact.getVersion() );
+            dep.setVersion(addVersionProperties ? "${" + versionPropertyName + "}" : artifact.getVersion());
             if ( !StringUtils.isEmpty( artifact.getClassifier() ))
             {
                 dep.setClassifier( artifact.getClassifier() );
