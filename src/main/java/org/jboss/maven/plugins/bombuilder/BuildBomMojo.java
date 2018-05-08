@@ -5,7 +5,9 @@ import java.io.FileWriter;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Properties;
 
 import org.apache.maven.artifact.Artifact;
@@ -94,6 +96,12 @@ public class BuildBomMojo
     @Parameter
     private List<DependencyExclusion> dependencyExclusions;
 
+    /**
+     * Whether or not to inherit exclusions
+     */
+    @Parameter
+    private boolean inheritExclusions;
+
 
     /**
      * Whether use properties to specify dependency versions in BOM
@@ -167,6 +175,56 @@ public class BuildBomMojo
     {
         // Sort the artifacts for readability
         List<Artifact> projectArtifacts = new ArrayList<Artifact>( mavenProject.getArtifacts() );
+        Map<DependencyId, Dependency> originalDeps = createDependencyMap(mavenProject.getDependencyManagement());
+        Collections.sort( projectArtifacts );
+
+        Properties versionProperties = new Properties();
+        DependencyManagement depMgmt = new DependencyManagement();
+        for ( Dependency originalDependency : mavenProject.getDependencyManagement().getDependencies() )
+        {
+            if (isExcludedDependency(originalDependency)) {
+                continue;
+            }
+
+            String versionPropertyName = VERSION_PROPERTY_PREFIX + originalDependency.getGroupId();
+            if (versionProperties.getProperty(versionPropertyName) != null
+                && !versionProperties.getProperty(versionPropertyName).equals(originalDependency.getVersion())) {
+                versionPropertyName = VERSION_PROPERTY_PREFIX + originalDependency.getGroupId() + "." + originalDependency.getArtifactId();
+            }
+            versionProperties.setProperty(versionPropertyName, originalDependency.getVersion());
+
+            Dependency dep = new Dependency();
+            dep.setGroupId( originalDependency.getGroupId() );
+            dep.setArtifactId( originalDependency.getArtifactId() );
+            dep.setVersion(addVersionProperties ? "${" + versionPropertyName + "}" : originalDependency.getVersion());
+            if ( !StringUtils.isEmpty( originalDependency.getClassifier() ))
+            {
+                dep.setClassifier( originalDependency.getClassifier() );
+            }
+            if ( !StringUtils.isEmpty( originalDependency.getType() ))
+            {
+                dep.setType( originalDependency.getType() );
+            }
+            if (exclusions != null) {
+                applyExclusions(originalDependency, dep);
+            }
+            if (inheritExclusions) {
+                inheritExclusions(originalDeps, originalDependency, dep);
+            }
+            depMgmt.addDependency( dep );
+        }
+        pomModel.setDependencyManagement( depMgmt );
+        if (addVersionProperties) {
+            pomModel.getProperties().putAll(versionProperties);
+        }
+        getLog().debug( "Added " + projectArtifacts.size() + " dependencies." );
+    }
+
+    /*private void addDependencyManagement( Model pomModel )
+    {
+        // Sort the artifacts for readability
+        List<Artifact> projectArtifacts = new ArrayList<Artifact>( mavenProject.getArtifacts() );
+        Map<DependencyId, Dependency> originalDeps = createDependencyMap(mavenProject.getDependencyManagement());
         Collections.sort( projectArtifacts );
 
         Properties versionProperties = new Properties();
@@ -179,7 +237,7 @@ public class BuildBomMojo
 
             String versionPropertyName = VERSION_PROPERTY_PREFIX + artifact.getGroupId();
             if (versionProperties.getProperty(versionPropertyName) != null
-                && !versionProperties.getProperty(versionPropertyName).equals(artifact.getVersion())) {
+                    && !versionProperties.getProperty(versionPropertyName).equals(artifact.getVersion())) {
                 versionPropertyName = VERSION_PROPERTY_PREFIX + artifact.getGroupId() + "." + artifact.getArtifactId();
             }
             versionProperties.setProperty(versionPropertyName, artifact.getVersion());
@@ -199,6 +257,9 @@ public class BuildBomMojo
             if (exclusions != null) {
                 applyExclusions(artifact, dep);
             }
+            if (inheritExclusions) {
+                inheritExclusions(originalDeps, artifact, dep);
+            }
             depMgmt.addDependency( dep );
         }
         pomModel.setDependencyManagement( depMgmt );
@@ -206,22 +267,33 @@ public class BuildBomMojo
             pomModel.getProperties().putAll(versionProperties);
         }
         getLog().debug( "Added " + projectArtifacts.size() + " dependencies." );
+    }*/
+
+    private void inheritExclusions(Map<DependencyId, Dependency> originalDeps, Dependency artifact, Dependency dep) {
+        Dependency originalDependency = originalDeps.get(new DependencyId(artifact.getGroupId(), artifact.getArtifactId(), artifact.getType()));
+        if (originalDependency == null) {
+            getLog().warn("Could not find dependency for " + artifact);
+            return;
+        }
+        for (Exclusion originalExclusion : originalDependency.getExclusions()) {
+            dep.addExclusion(originalExclusion.clone());
+        }
     }
 
-    boolean isExcludedDependency(Artifact artifact) {
+    boolean isExcludedDependency(Dependency dependency) {
         if (dependencyExclusions == null || dependencyExclusions.size() == 0) {
             return false;
         }
         for (DependencyExclusion exclusion : dependencyExclusions) {
-            if (matchesExcludedDependency(artifact, exclusion)) {
-                getLog().debug( "Artifact " + artifact.getGroupId() + ":" + artifact.getArtifactId() + " matches excluded dependency " + exclusion.getGroupId() + ":" + exclusion.getArtifactId() );
+            if (matchesExcludedDependency(dependency, exclusion)) {
+                getLog().debug( "Artifact " + dependency.getGroupId() + ":" + dependency.getArtifactId() + " matches excluded dependency " + exclusion.getGroupId() + ":" + exclusion.getArtifactId() );
                 return  true;
             }
         }
         return false;
     }
 
-    boolean matchesExcludedDependency(Artifact artifact, DependencyExclusion exclusion) {
+    boolean matchesExcludedDependency(Dependency artifact, DependencyExclusion exclusion) {
         String groupId = defaultAndTrim(artifact.getGroupId());
         String artifactId = defaultAndTrim(artifact.getArtifactId());
         String exclusionGroupId = defaultAndTrim(exclusion.getGroupId());
@@ -235,7 +307,7 @@ public class BuildBomMojo
         return defaultString(trim(string), "");
     }
 
-    private void applyExclusions(Artifact artifact, Dependency dep) {
+    private void applyExclusions(Dependency artifact, Dependency dep) {
         for (BomExclusion exclusion : exclusions) {
             if (exclusion.getDependencyGroupId().equals(artifact.getGroupId()) &&
                     exclusion.getDependencyArtifactId().equals(artifact.getArtifactId())) {
@@ -247,6 +319,16 @@ public class BuildBomMojo
         }
     }
 
+    private Map<DependencyId, Dependency> createDependencyMap(DependencyManagement dependencyManagement) {
+        if (dependencyManagement == null) {
+            return Collections.emptyMap();
+        }
+        Map<DependencyId, Dependency> dependencyMap = new HashMap<>();
+        for (Dependency dep : dependencyManagement.getDependencies()) {
+            dependencyMap.put(new DependencyId(dep.getGroupId(), dep.getArtifactId(), dep.getType()), dep);
+        }
+        return dependencyMap;
+    }
 
     static class ModelWriter {
 

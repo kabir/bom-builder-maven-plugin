@@ -3,6 +3,7 @@ package org.jboss.maven.plugins.bombuilder;
 import org.apache.maven.artifact.Artifact;
 import org.apache.maven.artifact.DefaultArtifact;
 import org.apache.maven.artifact.handler.ArtifactHandler;
+import org.apache.maven.model.Dependency;
 import org.apache.maven.model.Model;
 import org.apache.maven.project.MavenProject;
 import org.junit.Before;
@@ -71,17 +72,15 @@ public class BuildBomMojoTest {
     }
 
     private void assertArtifactMatchesExcludedDependency(boolean expected, String artifactGroupId, String artifactArtifactId, String dependencyGroupId, String dependencyArtifactId) {
-        Artifact artifact = createArtifact(artifactGroupId, artifactArtifactId);
+        Dependency dep = new Dependency();
+        dep.setGroupId(artifactGroupId);
+        dep.setArtifactId(artifactArtifactId);
         DependencyExclusion exclusion = createDependencyExclusion(dependencyGroupId, dependencyArtifactId);
         BuildBomMojo mojo = new BuildBomMojo();
-        assertEquals(expected, mojo.matchesExcludedDependency(artifact, exclusion));
+        assertEquals(expected, mojo.matchesExcludedDependency(dep, exclusion));
     }
 
     private DependencyExclusion createDependencyExclusion(String groupId, String artifactId) {
         return new DependencyExclusion(groupId, artifactId);
-    }
-
-    private Artifact createArtifact(String groupId, String artifactId) {
-        return new DefaultArtifact(groupId, artifactId, "version", "scope", "type", "classifier", (ArtifactHandler)null);
     }
 }
